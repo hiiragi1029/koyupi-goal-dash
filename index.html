@@ -8,8 +8,15 @@
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#80d4ff;font-family:system-ui,-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;touch-action:none}
-  #wrap{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(#74cdfc,#dff5ff)}
-  canvas{display:block;width:100%;height:100%;max-width:1100px;background:#8ed8ff;box-shadow:0 0 30px #0002}
+  #wrap{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(#74cdfc,#dff5ff);overflow:hidden}
+  canvas{
+    display:block;
+    width:min(100vw,calc(100vh * 16 / 9));
+    height:min(100vh,calc(100vw * 9 / 16));
+    aspect-ratio:16/9;
+    background:#8ed8ff;
+    box-shadow:0 0 30px #0002;
+  }
   #hud{position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));top:max(10px,env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:900;text-shadow:0 2px 4px #245;pointer-events:none;font-size:clamp(15px,3vw,22px)}
   #controls{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;justify-content:space-between;padding:0 18px;pointer-events:none}
   .group{display:flex;gap:12px;pointer-events:auto}
@@ -33,19 +40,23 @@
   <div class="group"><button class="ctrl" id="left" aria-label="左">◀</button><button class="ctrl" id="right" aria-label="右">▶</button></div>
   <div class="group"><button class="ctrl" id="jump" aria-label="ジャンプ">↑</button></div>
 </div>
-<div id="overlay"><div class="card"><h1 id="title">こゆぴの<br>ゴールダッシュ</h1><p id="message">敵をよけながら右へ進もう！<br>矢印ボタンで移動、黄色ボタンでジャンプ。</p><button id="start">スタート</button><p class="small">パソコン：← → / A D、ジャンプ：Space</p></div></div>
+<div id="overlay"><div class="card"><h1 id="title">こゆぴの<br>ゴールダッシュ</h1><p id="message">敵をよけながら右へ進もう！<br>矢印ボタンで移動、黄色ボタンでジャンプ。</p><button id="start">スタート</button><p class="small">パソコン：← → / A D、ジャンプ：Space<br>スマホでも画面サイズに関係なく同じプレイ範囲を表示します。</p></div></div>
 <script>
 (() => {
   const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
   const overlay = document.getElementById('overlay'), titleEl = document.getElementById('title'), msgEl = document.getElementById('message'), startBtn = document.getElementById('start');
   const statusEl = document.getElementById('status'), distEl = document.getElementById('distance');
-  let W=960,H=540,dpr=1,ground=440;
+  // 固定の仮想プレイ画面。端末サイズに関係なくゲーム内座標は変わらない。
+  const W=960,H=540;
+  let ground=425;
   function resize(){
-    dpr=Math.min(devicePixelRatio||1,2); W=Math.min(innerWidth,1100); H=innerHeight;
-    canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);
-    ground=H-Math.max(95,Math.min(145,H*.21));
+    const dpr=Math.min(devicePixelRatio||1,2);
+    canvas.width=W*dpr;
+    canvas.height=H*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
   }
-  addEventListener('resize',resize);resize();
+  addEventListener('resize',resize);
+  resize();
 
   const load = src => new Promise(resolve=>{
     const img = new Image();
@@ -170,9 +181,6 @@
       }
       ctx.restore();
     }
-    ctx.fillStyle='#17384d';
-    ctx.font='700 12px sans-serif';
-    ctx.fillText(assetMessage,10,Math.max(18,ground-8));
     for(const p of particles){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill()}ctx.globalAlpha=1;
   }
   function loop(t){if(!running)return;const dt=Math.min(.032,(t-last)/1000);last=t;update(dt);draw();if(running)requestAnimationFrame(loop)}
