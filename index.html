@@ -101,7 +101,7 @@
   addEventListener('keydown',e=>{if(['ArrowLeft','a','A'].includes(e.key))keys.left=true;if(['ArrowRight','d','D'].includes(e.key))keys.right=true;if([' ','ArrowUp','w','W'].includes(e.key)){e.preventDefault();keys.jump=true;tryJump();}});
   addEventListener('keyup',e=>{if(['ArrowLeft','a','A'].includes(e.key))keys.left=false;if(['ArrowRight','d','D'].includes(e.key))keys.right=false;if([' ','ArrowUp','w','W'].includes(e.key))keys.jump=false;});
 
-  let running=false,last=0,worldX=0,goalX=3600,lives=3,inv=0,spawnTimer=0,enemies=[],particles=[],clouds=[];
+  let running=false,last=0,worldX=0,playerWorldX=130,goalX=3600,lives=3,inv=0,spawnTimer=0,enemies=[],particles=[],clouds=[];
   let final10Shown=false;
   let bossIntroPlayed=false, cutsceneActive=false, cutsceneTimer=0;
   let phase='run'; // run -> intro -> boss -> clear/gameover
@@ -118,7 +118,7 @@
   };
   const hero={x:130,y:0,w:78,h:118,vx:0,vy:0,onGround:false,frame:0,face:1};
   function reset(){
-    worldX=0;lives=3;inv=0;spawnTimer=0;enemies=[];particles=[];final10Shown=false;
+    worldX=0;playerWorldX=130;lives=3;inv=0;spawnTimer=0;enemies=[];particles=[];final10Shown=false;
     bossIntroPlayed=false;cutsceneActive=false;cutsceneTimer=0;phase='run';flagTaken=false;
     hero.x=130;hero.y=ground-hero.h;hero.vx=hero.vy=0;hero.onGround=true;
     bossCameraX=0;bossRightTravel=0;bossLeftTravel=0;
@@ -230,8 +230,19 @@
     hero.face=dir!==0?dir:hero.face; hero.vy+=1900*dt; hero.y+=hero.vy*dt;
     if(hero.y+hero.h>=ground){hero.y=ground-hero.h;hero.vy=0;hero.onGround=true}
     if(hero.y<10){hero.y=10;hero.vy=0}
-    const advance=Math.max(0,hero.vx)*dt; worldX+=advance; hero.x+=hero.vx*dt;
-    if(hero.x>W*.42)hero.x=W*.42;if(hero.x<20)hero.x=20;
+    // 横スクロール区間はプレイヤーのワールド座標を独立して保持する。
+    const prevWorldX=worldX;
+    playerWorldX += hero.vx*dt;
+    playerWorldX = Math.max(20, Math.min(goalX+120, playerWorldX));
+
+    // 画面中央寄りまで進んだらカメラが追従。左へ戻れば旗はワールド上の固定位置に残る。
+    const desiredRunCamera=Math.max(0, playerWorldX-W*.42);
+    worldX += (desiredRunCamera-worldX)*Math.min(1,dt*12);
+    hero.x=playerWorldX-worldX;
+    hero.x=Math.max(20,Math.min(W*.42,hero.x));
+
+    const cameraAdvance=worldX-prevWorldX;
+    const advance=Math.max(0,cameraAdvance);
     hero.frame += (Math.abs(hero.vx)>30&&hero.onGround?dt*10:dt*2);
     spawnTimer-=dt;
     if(spawnTimer<=0&&worldX<goalX-700){
@@ -250,9 +261,9 @@
     if(inv>0)inv-=dt;
     for(const e of enemies){if(inv<=0&&hit(hero,e)){lives--;inv=1.65;hero.vy=-500;hero.vx=-210;burst(hero.x+hero.w/2,hero.y+hero.h/2,18);navigator.vibrate?.(100);statusEl.textContent='❤'.repeat(lives)+'♡'.repeat(3-lives);if(lives<=0){end(false);return}}}
     for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=480*dt;p.life-=dt}particles=particles.filter(p=>p.life>0);
-    const remainingPct=(goalX-worldX)/goalX*100;
+    const remainingPct=(goalX-playerWorldX)/goalX*100;
     distEl.textContent='FLAG '+Math.max(0,Math.ceil(remainingPct))+'%';
-    if(worldX>=goalX && !flagTaken){
+    if(playerWorldX>=goalX && !flagTaken){
       flagTaken=true;
       startBossIntro();
       return;
@@ -413,8 +424,10 @@
     ctx.fillStyle='#65bf55';ctx.fillRect(0,ground,W,H-ground);ctx.fillStyle='#8b5a2b';ctx.fillRect(0,ground+24,W,H-ground-24);
     ctx.fillStyle='#b7793c';for(let x=-(worldX%60);x<W;x+=60)ctx.fillRect(x,ground+32,38,12);
     if(phase==='run'){
-      const goalScreen=hero.x+(goalX-worldX);
-      if(goalScreen<W+150){
+      // 旗はワールド座標 goalX に固定。
+      // プレイヤーの画面内X座標とは無関係に、スクロール量だけで位置が決まる。
+      const goalScreen=goalX-worldX;
+      if(goalScreen>-120 && goalScreen<W+150){
         ctx.fillStyle='#eee';ctx.fillRect(goalScreen,ground-210,12,210);
         ctx.fillStyle='#ff4a4a';ctx.beginPath();ctx.moveTo(goalScreen+12,ground-205);ctx.lineTo(goalScreen+95,ground-172);ctx.lineTo(goalScreen+12,ground-140);ctx.fill();
         ctx.fillStyle='#17384d';ctx.font='900 22px sans-serif';ctx.fillText('FLAG',goalScreen+20,ground-165);
@@ -491,10 +504,10 @@
         ctx.restore();
 
       }else if(boss.motion==='air'){
-        // 上昇時は縦に伸び、下降時は少し横に広がる
-        if(boss.vy<0){scaleY=1.13;scaleX=.92}
-        else{scaleY=.96;scaleX=1.06}
-        rot=Math.max(-.09,Math.min(.09,boss.vx/1600));
+        // ジャンプ専用画像は立ち姿に近いので、変形を控えめにして違和感を減らす。
+        if(boss.vy<0){scaleY=1.035;scaleX=.985}
+        else{scaleY=.995;scaleX=1.015}
+        rot=Math.max(-.045,Math.min(.045,boss.vx/2600));
       }else if(boss.motion==='land'){
         const p=Math.min(1,boss.landT/.30);
         const squash=Math.sin(p*Math.PI);
@@ -511,15 +524,17 @@
       let strideX=0;
 
       if(boss.motion==='walk' && bossWalkFrames.length){
-        // 動画から抜き出した複数フレームを約10fpsで循環表示
+        // 地上歩行は動画から抽出した複数フレーム
         const frameIndex=Math.floor(boss.walkT*10)%bossWalkFrames.length;
         const candidate=bossWalkFrames[frameIndex];
         if(candidate && candidate.complete)img=candidate;
         strideX=Math.sin(boss.walkT*7.2)*3;
+      }else{
+        // 溜め・空中・着地は今回指定された boss_sprite.webp を使用
+        img=(bossSpriteImg && bossSpriteImg.complete)?bossSpriteImg:bossIntroImg2;
       }
 
       if(img && img.complete){
-        // 動画フレームは横長なので、中央を保ちつつ少し大きく表示
         ctx.drawImage(img,-boss.w/2+strideX,-boss.h/2,boss.w,boss.h);
       }else{
         ctx.fillStyle='#8b1e1e';ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
