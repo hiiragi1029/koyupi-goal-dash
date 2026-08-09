@@ -58,22 +58,20 @@
   addEventListener('resize',resize);
   resize();
 
-  // 必須画像はすべて assets/ から読み込む。
-  // 毎回タイムスタンプを付け、GitHub Pages / Safari の古い画像キャッシュを回避する。
+  // assets 画像は可能なものだけ読み込む。欠けていてもゲームは停止しない。
   const ASSET_VERSION=Date.now();
   let assetsReady=false;
-  let assetError=null;
   let heroImgs=[], enemyImgs=[];
   let bossIntroImg1=null, bossIntroImg2=null, bossSpriteImg=null, bossWalkFrames=[];
 
-  const requiredLoad = src => new Promise((resolve,reject)=>{
+  const safeLoad = src => new Promise(resolve=>{
     const img=new Image();
-    img.onload=()=>resolve(img);
-    img.onerror=()=>reject(new Error('画像を読み込めません: '+src));
+    img.onload=()=>resolve({ok:true,img,src});
+    img.onerror=()=>resolve({ok:false,img:null,src});
     img.src=src+'?v='+ASSET_VERSION;
   });
 
-  const requiredAssetPaths=[
+  const assetPaths=[
     ...[0,1,2,3,4].map(i=>`assets/hero_${i}.png`),
     ...[1,2,3].map(i=>`assets/enemy_${i}.png`),
     'assets/boss_intro_1.png',
@@ -82,40 +80,26 @@
     ...[0,1,2,3,4,5].map(i=>`assets/boss_walk_${i}.png`)
   ];
 
-  function showAssetError(message){
-    running=false;
-    assetsReady=false;
-    assetError=message;
-    overlay.style.display='grid';
-    titleEl.textContent='画像読み込みエラー';
-    msgEl.innerHTML='assetsフォルダの画像を確認してください。<br><strong>'+message+'</strong>';
-    startBtn.disabled=true;
-    startBtn.textContent='画像を確認';
-    console.error(message);
-  }
-
   startBtn.disabled=true;
   startBtn.textContent='画像読み込み中…';
 
-  Promise.all(requiredAssetPaths.map(requiredLoad))
-    .then(imgs=>{
-      heroImgs=imgs.slice(0,5);
-      enemyImgs=imgs.slice(5,8);
-      bossIntroImg1=imgs[8];
-      bossIntroImg2=imgs[9];
-      bossSpriteImg=imgs[10];
-      bossWalkFrames=imgs.slice(11,17);
+  Promise.all(assetPaths.map(safeLoad)).then(results=>{
+    heroImgs=results.slice(0,5).map(r=>r.img);
+    enemyImgs=results.slice(5,8).map(r=>r.img);
+    bossIntroImg1=results[8].img;
+    bossIntroImg2=results[9].img;
+    bossSpriteImg=results[10].img;
+    bossWalkFrames=results.slice(11,17).map(r=>r.img);
 
-      assetsReady=true;
-      assetError=null;
-      startBtn.disabled=false;
-      startBtn.textContent='スタート';
-      console.log('必須画像の読み込み完了:', requiredAssetPaths);
-      draw();
-    })
-    .catch(err=>{
-      showAssetError(err.message);
-    });
+    assetsReady=true;
+    startBtn.disabled=false;
+    startBtn.textContent='スタート';
+
+    const missing=results.filter(r=>!r.ok).map(r=>r.src);
+    if(missing.length) console.warn('読み込めなかった画像:',missing);
+
+    draw();
+  });
 
   const keys={left:false,right:false,jump:false};
   const bind=(id,key)=>{const b=document.getElementById(id); ['pointerdown','touchstart'].forEach(ev=>b.addEventListener(ev,e=>{e.preventDefault();keys[key]=true;if(key==='jump')tryJump();},{passive:false})); ['pointerup','pointercancel','pointerleave','touchend'].forEach(ev=>b.addEventListener(ev,e=>{e.preventDefault();keys[key]=false},{passive:false}));};
@@ -154,10 +138,7 @@
   }
   function tryJump(){if(running&&hero.onGround){hero.vy=-1140;hero.onGround=false;burst(hero.x+hero.w/2,hero.y+hero.h,8);}}
   function start(){
-    if(!assetsReady){
-      showAssetError(assetError||'必須画像の読み込みが完了していません');
-      return;
-    }
+    if(!assetsReady)return;
     reset();spawnTimer=.2;overlay.style.display='none';running=true;last=performance.now();requestAnimationFrame(loop)
   }
   startBtn.onclick=start;
@@ -536,11 +517,12 @@
     }
     for(const e of enemies){
       const img=enemyImgs[e.type];
-      if(!img){
-        showAssetError('実行中に画像が見つかりません: assets/enemy_'+(e.type+1)+'.png');
-        return;
+      if(img){
+        ctx.drawImage(img,e.x,e.y,e.w,e.h);
+      }else{
+        ctx.fillStyle=['#2770d8','#e24a3b','#4a65b8'][e.type];
+        ctx.fillRect(e.x,e.y,e.w,e.h);
       }
-      ctx.drawImage(img,e.x,e.y,e.w,e.h);
     }
     if(phase==='boss' && boss.alive){
       const sx=boss.x-bossCameraX+boss.w/2;
@@ -607,12 +589,12 @@
         img=bossSpriteImg;
       }
 
-      if(!img || !img.complete){
-        showAssetError('実行中にボス画像を読み込めません');
-        ctx.restore();
-        return;
+      if(img && img.complete){
+        ctx.drawImage(img,-boss.w/2+strideX,-boss.h/2,boss.w,boss.h);
+      }else{
+        ctx.fillStyle='#8b1e1e';
+        ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
       }
-      ctx.drawImage(img,-boss.w/2+strideX,-boss.h/2,boss.w,boss.h);
       ctx.restore();
     }
     {
@@ -623,12 +605,12 @@
       const heroScreenX=phase==='boss'?hero.x-bossCameraX:hero.x;
       if(hero.face<0){ctx.translate(heroScreenX*2+hero.w,0);ctx.scale(-1,1)}
       const heroDrawX=phase==='boss'?hero.x-bossCameraX:hero.x;
-      if(!img){
-        showAssetError('実行中に主人公画像を読み込めません: assets/hero_'+idx+'.png');
-        ctx.restore();
-        return;
+      if(img){
+        ctx.drawImage(img,heroDrawX,hero.y,hero.w,hero.h);
+      }else{
+        ctx.fillStyle='#ffd94f';
+        ctx.fillRect(heroDrawX,hero.y,hero.w,hero.h);
       }
-      ctx.drawImage(img,heroDrawX,hero.y,hero.w,hero.h);
       ctx.restore();
     }
 for(const p of particles){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill()}ctx.globalAlpha=1;
