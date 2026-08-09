@@ -58,42 +58,64 @@
   addEventListener('resize',resize);
   resize();
 
-  const load = src => new Promise(resolve=>{
-    const img = new Image();
-    img.onload = () => resolve({ok:true,img,src});
-    img.onerror = () => resolve({ok:false,img:null,src});
-    img.src = src + '?v=6';
-  });
-  let heroImgs=[], enemyImgs=[], assetMessage='画像を読み込み中…';
-  let final10Img=null;
-  Promise.all([
-    ...[0,1,2,3,4].map(i=>load(`assets/hero_${i}.png`)),
-    ...[1,2,3].map(i=>load(`assets/enemy_${i}.png`)),
-    load('assets/final_10.png')
-  ]).then(results=>{
-    heroImgs = results.slice(0,5).map(r=>r.img);
-    enemyImgs = results.slice(5,8).map(r=>r.img);
-    final10Img = results[8].img;
-    const failed = results.filter(r=>!r.ok).map(r=>r.src);
-    assetMessage = failed.length ? '未読込: ' + failed.join(', ') : '画像読込OK';
-    console.log(assetMessage);
-    draw();
-  });
+  // 必須画像はすべて assets/ から読み込む。
+  // 毎回タイムスタンプを付け、GitHub Pages / Safari の古い画像キャッシュを回避する。
+  const ASSET_VERSION=Date.now();
+  let assetsReady=false;
+  let assetError=null;
+  let heroImgs=[], enemyImgs=[];
+  let bossIntroImg1=null, bossIntroImg2=null, bossSpriteImg=null, bossWalkFrames=[];
 
-  // ボス戦前演出用の2枚の画像はHTML内に埋め込み済み
-  const bossIntroImg1 = new Image();
-  bossIntroImg1.src = 'assets/boss_intro_1.jpg?v=1';
-  const bossIntroImg2 = new Image();
-  bossIntroImg2.src = 'assets/boss_intro_2.jpg?v=1';
-
-  const bossSpriteImg = new Image();
-  bossSpriteImg.src = 'assets/boss_sprite.webp?v=1';
-  const bossWalkFrames=[];
-  for(let n=0;n<6;n++){
+  const requiredLoad = src => new Promise((resolve,reject)=>{
     const img=new Image();
-    img.src=`assets/boss_walk_${n}.jpg?v=1`;
-    bossWalkFrames.push(img);
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error('画像を読み込めません: '+src));
+    img.src=src+'?v='+ASSET_VERSION;
+  });
+
+  const requiredAssetPaths=[
+    ...[0,1,2,3,4].map(i=>`assets/hero_${i}.png`),
+    ...[1,2,3].map(i=>`assets/enemy_${i}.png`),
+    'assets/boss_intro_1.png',
+    'assets/boss_intro_2.png',
+    'assets/boss_sprite.webp',
+    ...[0,1,2,3,4,5].map(i=>`assets/boss_walk_${i}.png`)
+  ];
+
+  function showAssetError(message){
+    running=false;
+    assetsReady=false;
+    assetError=message;
+    overlay.style.display='grid';
+    titleEl.textContent='画像読み込みエラー';
+    msgEl.innerHTML='assetsフォルダの画像を確認してください。<br><strong>'+message+'</strong>';
+    startBtn.disabled=true;
+    startBtn.textContent='画像を確認';
+    console.error(message);
   }
+
+  startBtn.disabled=true;
+  startBtn.textContent='画像読み込み中…';
+
+  Promise.all(requiredAssetPaths.map(requiredLoad))
+    .then(imgs=>{
+      heroImgs=imgs.slice(0,5);
+      enemyImgs=imgs.slice(5,8);
+      bossIntroImg1=imgs[8];
+      bossIntroImg2=imgs[9];
+      bossSpriteImg=imgs[10];
+      bossWalkFrames=imgs.slice(11,17);
+
+      assetsReady=true;
+      assetError=null;
+      startBtn.disabled=false;
+      startBtn.textContent='スタート';
+      console.log('必須画像の読み込み完了:', requiredAssetPaths);
+      draw();
+    })
+    .catch(err=>{
+      showAssetError(err.message);
+    });
 
   const keys={left:false,right:false,jump:false};
   const bind=(id,key)=>{const b=document.getElementById(id); ['pointerdown','touchstart'].forEach(ev=>b.addEventListener(ev,e=>{e.preventDefault();keys[key]=true;if(key==='jump')tryJump();},{passive:false})); ['pointerup','pointercancel','pointerleave','touchend'].forEach(ev=>b.addEventListener(ev,e=>{e.preventDefault();keys[key]=false},{passive:false}));};
@@ -110,11 +132,13 @@
   let bossCameraX=0;
   let bossRightTravel=0, bossLeftTravel=0;
   let rightPitActive=false, leftPitActive=false;
+  let heroFallingInPit=false;
   let rightHoleX=0, leftHoleX=0;
   const pitTriggerDistance=1650;
   const boss={
     x:650,y:0,w:170,h:170,vx:-95,vy:0,onGround:false,jumpTimer:1.6,alive:true,
-    motion:'walk', motionT:0, landT:0, walkT:0, airChaseCooldown:0
+    motion:'walk', motionT:0, landT:0, walkT:0, airChaseCooldown:0,
+    fallingInPit:false, pitSide:null
   };
   const hero={x:130,y:0,w:78,h:118,vx:0,vy:0,onGround:false,frame:0,face:1};
   function reset(){
@@ -122,14 +146,20 @@
     bossIntroPlayed=false;cutsceneActive=false;cutsceneTimer=0;phase='run';flagTaken=false;
     hero.x=130;hero.y=ground-hero.h;hero.vx=hero.vy=0;hero.onGround=true;
     bossCameraX=0;bossRightTravel=0;bossLeftTravel=0;
-    rightPitActive=false;leftPitActive=false;rightHoleX=0;leftHoleX=0;
-    boss.x=650;boss.y=ground-boss.h;boss.vx=-95;boss.vy=0;boss.onGround=true;boss.jumpTimer=1.6;boss.alive=true;
-    boss.motion='walk';boss.motionT=0;boss.landT=0;boss.walkT=0;boss.airChaseCooldown=0;
+    rightPitActive=false;leftPitActive=false;rightHoleX=0;leftHoleX=0;heroFallingInPit=false;
+    boss.x=650;boss.y=ground-boss.h;boss.vx=-95;boss.vy=0;boss.onGround=true;boss.jumpTimer=1.35;boss.alive=true;
+    boss.motion='walk';boss.motionT=0;boss.landT=0;boss.walkT=0;boss.fallingInPit=false;boss.pitSide=null;boss.airChaseCooldown=0;
     statusEl.textContent='❤❤❤';distEl.textContent='FLAG 100%';
     clouds=Array.from({length:10},(_,i)=>({x:i*380+Math.random()*180,y:40+Math.random()*180,s:.7+Math.random()}));
   }
   function tryJump(){if(running&&hero.onGround){hero.vy=-1140;hero.onGround=false;burst(hero.x+hero.w/2,hero.y+hero.h,8);}}
-  function start(){reset();spawnTimer=.2;overlay.style.display='none';running=true;last=performance.now();requestAnimationFrame(loop)}
+  function start(){
+    if(!assetsReady){
+      showAssetError(assetError||'必須画像の読み込みが完了していません');
+      return;
+    }
+    reset();spawnTimer=.2;overlay.style.display='none';running=true;last=performance.now();requestAnimationFrame(loop)
+  }
   startBtn.onclick=start;
 
   function startBossIntro(){
@@ -146,9 +176,9 @@
     hero.x=0; hero.y=ground-hero.h; hero.vx=0; hero.vy=0; hero.onGround=true;
     bossCameraX=hero.x+hero.w/2-W/2;
     bossRightTravel=0;bossLeftTravel=0;
-    rightPitActive=false;leftPitActive=false;rightHoleX=0;leftHoleX=0;
-    boss.x=650; boss.y=ground-boss.h; boss.vx=-95; boss.vy=0; boss.onGround=true; boss.jumpTimer=1.45; boss.alive=true;
-    boss.motion='walk';boss.motionT=0;boss.landT=0;boss.walkT=0;boss.airChaseCooldown=0;
+    rightPitActive=false;leftPitActive=false;rightHoleX=0;leftHoleX=0;heroFallingInPit=false;
+    boss.x=650; boss.y=ground-boss.h; boss.vx=-95; boss.vy=0; boss.onGround=true; boss.jumpTimer=1.25; boss.alive=true;
+    boss.motion='walk';boss.motionT=0;boss.landT=0;boss.walkT=0;boss.fallingInPit=false;boss.pitSide=null;boss.airChaseCooldown=0;
     distEl.textContent='BOSS';
   }
   function updateBossIntro(dt){
@@ -279,43 +309,57 @@
     hero.vy+=1900*dt;
 
     const prevHeroX=hero.x;
-    hero.x+=hero.vx*dt;
+
+    // プレイヤーが穴へ落ち始めた後は、地面へ復帰させない
+    if(!heroFallingInPit){
+      hero.x+=hero.vx*dt;
+    }else{
+      hero.vx*=Math.pow(.08,dt);
+    }
     hero.y+=hero.vy*dt;
 
-    if(hero.x<bossArena.left) hero.x=bossArena.left;
-    if(hero.x+hero.w>bossArena.right) hero.x=bossArena.right-hero.w;
+    if(!heroFallingInPit){
+      if(hero.x<bossArena.left) hero.x=bossArena.left;
+      if(hero.x+hero.w>bossArena.right) hero.x=bossArena.right-hero.w;
+    }
 
-    // 右へ歩いた距離と左へ歩いた距離を別々に計測
     const dx=hero.x-prevHeroX;
     if(dx>0) bossRightTravel+=dx;
     if(dx<0) bossLeftTravel+=-dx;
 
-    // 右方向で一定距離歩いたら右側に1つだけ穴
     if(!rightPitActive && bossRightTravel>=pitTriggerDistance){
       rightPitActive=true;
       rightHoleX=Math.min(bossArena.right-bossArena.holeW-220, hero.x+760);
     }
-    // 左方向で一定距離歩いたら左側に1つだけ穴
     if(!leftPitActive && bossLeftTravel>=pitTriggerDistance){
       leftPitActive=true;
       leftHoleX=Math.max(bossArena.left+220, hero.x-760);
     }
 
     const heroCenter=hero.x+hero.w/2;
-    const overRightPit=rightPitActive && heroCenter>rightHoleX && heroCenter<rightHoleX+bossArena.holeW;
-    const overLeftPit=leftPitActive && heroCenter>leftHoleX && heroCenter<leftHoleX+bossArena.holeW;
-    const overHole=overRightPit||overLeftPit;
+    const heroOverRight=rightPitActive && heroCenter>rightHoleX && heroCenter<rightHoleX+bossArena.holeW;
+    const heroOverLeft=leftPitActive && heroCenter>leftHoleX && heroCenter<leftHoleX+bossArena.holeW;
+    const heroOverHole=heroOverRight||heroOverLeft;
 
-    if(hero.y+hero.h>=ground && !overHole){
-      hero.y=ground-hero.h;hero.vy=0;hero.onGround=true;
-    }else if(overHole && hero.y+hero.h>=ground){
-      hero.onGround=false;
+    if(!heroFallingInPit && hero.y+hero.h>=ground){
+      if(heroOverHole){
+        heroFallingInPit=true;
+        hero.onGround=false;
+        hero.vy=Math.max(hero.vy,90);
+      }else{
+        hero.y=ground-hero.h;
+        hero.vy=0;
+        hero.onGround=true;
+      }
     }
-    if(hero.y>H+100){end(false);return;}
+
+    if(heroFallingInPit){
+      hero.onGround=false;
+      if(hero.y>H+100){end(false);return;}
+    }
 
     hero.frame += (Math.abs(hero.vx)>30&&hero.onGround?dt*10:dt*2);
 
-    // 主人公を中心に左右へスクロール
     const desiredCamera=hero.x+hero.w/2-W/2;
     const minCam=bossArena.left-80;
     const maxCam=bossArena.right-W+80;
@@ -324,93 +368,126 @@
     if(boss.alive){
       boss.walkT+=dt;
 
-      if(boss.motion==='walk'){
-        boss.jumpTimer-=dt;
-
-        // 地上にいる時だけ主人公の方向へ向きを変更。
-        // プレイヤーの最大地上速度と同じ300px/s。
-        const toward=hero.x<boss.x?-1:1;
-        const BOSS_WALK_SPEED=300;
-        boss.vx=toward*BOSS_WALK_SPEED;
-
-        if(boss.onGround && boss.jumpTimer<=0){
-          boss.motion='charge';
-          boss.motionT=0;
-          boss.vx=0;
-        }
-      }else if(boss.motion==='charge'){
-        boss.motionT+=dt;
+      // 一度穴へ落ち始めたら、以後はX座標を穴中央に固定して落下だけさせる。
+      if(boss.fallingInPit){
         boss.vx=0;
-        if(boss.motionT>=0.72){
-          boss.motion='air';
-          boss.motionT=0;
-          boss.onGround=false;
-          boss.vy=-(1030+Math.random()*150);
-
-          // 離陸した瞬間の方向を固定。空中では方向転換しない。
-          const toward=hero.x<boss.x?-1:1;
-          boss.vx=toward*(150+Math.random()*35);
-        }
-      }
-      // air中はboss.vxを変更しない
-
-      boss.vy+=1750*dt;
-      boss.x+=boss.vx*dt;
-      boss.y+=boss.vy*dt;
-
-      if(boss.x<bossArena.left){boss.x=bossArena.left;boss.vx=Math.abs(boss.vx)}
-      if(boss.x+boss.w>bossArena.right){boss.x=bossArena.right-boss.w;boss.vx=-Math.abs(boss.vx)}
-
-      const bossCenter=boss.x+boss.w/2;
-      const bossOverRight=rightPitActive && bossCenter>rightHoleX && bossCenter<rightHoleX+bossArena.holeW;
-      const bossOverLeft=leftPitActive && bossCenter>leftHoleX && bossCenter<leftHoleX+bossArena.holeW;
-      const bossOverHole=bossOverRight||bossOverLeft;
-
-      if(boss.y+boss.h>=ground && !bossOverHole){
-        const wasAir=!boss.onGround || boss.motion==='air';
-        boss.y=ground-boss.h;boss.vy=0;boss.onGround=true;
-
-        if(wasAir){
-          boss.motion='land';
-          boss.landT=0;
-          boss.jumpTimer=1.75+Math.random()*.65;
-        }
-      }else if(bossOverHole && boss.y+boss.h>=ground){
         boss.onGround=false;
-      }
+        boss.motion='air';
+        boss.vy+=1750*dt;
+        boss.y+=boss.vy*dt;
 
-      if(boss.motion==='land'){
-        boss.landT+=dt;
-        boss.vx=0;
-        if(boss.landT>=0.30){
-          boss.motion='walk';
-          boss.motionT=0;
+        if(boss.y>H+80){
+          boss.alive=false;
+          end(true);
+          return;
         }
-      }
+      }else{
+        if(boss.motion==='walk'){
+          boss.jumpTimer-=dt;
 
-      if(boss.y>H+120){
-        boss.alive=false;
-        end(true);
-        return;
-      }
+          // 地上にいる時だけ主人公の方向へ向きを変更。
+          // プレイヤーの最大地上速度と同じ300px/s。
+          const toward=hero.x<boss.x?-1:1;
+          const BOSS_WALK_SPEED=300;
+          boss.vx=toward*BOSS_WALK_SPEED;
 
-      if(inv<=0){
-        const safeBoss={
-          x:boss.x+boss.w*.16,
-          y:boss.y+boss.h*.12,
-          w:boss.w*.68,
-          h:boss.h*.78
-        };
-        if(hit(hero,safeBoss)){
-          lives--;
-          inv=1.75;
-          hero.vy=-520;
-          hero.vx=hero.x<boss.x?-245:245;
-          statusEl.textContent='❤'.repeat(lives)+'♡'.repeat(3-lives);
-          if(lives<=0){end(false);return;}
+          if(boss.onGround && boss.jumpTimer<=0){
+            boss.motion='charge';
+            boss.motionT=0;
+            boss.vx=0;
+          }
+        }else if(boss.motion==='charge'){
+          boss.motionT+=dt;
+          boss.vx=0;
+          if(boss.motionT>=0.72){
+            boss.motion='air';
+            boss.motionT=0;
+            boss.onGround=false;
+            boss.vy=-(1030+Math.random()*150);
+
+            // 離陸した瞬間の方向を固定。空中では方向転換しない。
+            const toward=hero.x<boss.x?-1:1;
+            boss.vx=toward*(150+Math.random()*35);
+          }
+        }
+        // air中は方向転換しない
+
+        boss.vy+=1750*dt;
+        boss.x+=boss.vx*dt;
+        boss.y+=boss.vy*dt;
+
+        if(boss.x<bossArena.left){boss.x=bossArena.left;boss.vx=Math.abs(boss.vx)}
+        if(boss.x+boss.w>bossArena.right){boss.x=bossArena.right-boss.w;boss.vx=-Math.abs(boss.vx)}
+
+        // ボス座標は常にワールド座標で判定する。
+        // カメラ座標は描画にしか使わない。
+        const bossCenterX=boss.x+boss.w/2;
+        const bossFeetY=boss.y+boss.h;
+
+        const bossOverRight=rightPitActive &&
+          bossCenterX>rightHoleX &&
+          bossCenterX<rightHoleX+bossArena.holeW;
+
+        const bossOverLeft=leftPitActive &&
+          bossCenterX>leftHoleX &&
+          bossCenterX<leftHoleX+bossArena.holeW;
+
+        const bossOverHole=bossOverRight||bossOverLeft;
+
+        if(bossFeetY>=ground){
+          if(bossOverHole){
+            // ここで「落下状態」を確定させる。
+            boss.fallingInPit=true;
+            boss.pitSide=bossOverRight?'right':'left';
+
+            const holeX=bossOverRight?rightHoleX:leftHoleX;
+            boss.x=holeX+(bossArena.holeW-boss.w)/2;
+            boss.vx=0;
+            boss.vy=Math.max(boss.vy,110);
+            boss.onGround=false;
+            boss.motion='air';
+          }else{
+            const wasAir=!boss.onGround || boss.motion==='air';
+            boss.y=ground-boss.h;
+            boss.vy=0;
+            boss.onGround=true;
+
+            if(wasAir){
+              boss.motion='land';
+              boss.landT=0;
+              boss.jumpTimer=1.45+Math.random()*.55;
+            }
+          }
+        }
+
+        if(boss.motion==='land'){
+          boss.landT+=dt;
+          boss.vx=0;
+          if(boss.landT>=0.30){
+            boss.motion='walk';
+            boss.motionT=0;
+          }
+        }
+
+        if(inv<=0){
+          const safeBoss={
+            x:boss.x+boss.w*.16,
+            y:boss.y+boss.h*.12,
+            w:boss.w*.68,
+            h:boss.h*.78
+          };
+          if(hit(hero,safeBoss)){
+            lives--;
+            inv=1.75;
+            hero.vy=-520;
+            hero.vx=hero.x<boss.x?-245:245;
+            statusEl.textContent='❤'.repeat(lives)+'♡'.repeat(3-lives);
+            if(lives<=0){end(false);return;}
+          }
         }
       }
     }
+
     if(inv>0)inv-=dt;
   }
 
@@ -459,15 +536,11 @@
     }
     for(const e of enemies){
       const img=enemyImgs[e.type];
-      if(img){
-        ctx.drawImage(img,e.x,e.y,e.w,e.h);
-      }else{
-        ctx.fillStyle=['#2770d8','#e24a3b','#4a65b8'][e.type];
-        ctx.fillRect(e.x,e.y,e.w,e.h);
-        ctx.fillStyle='#fff';
-        ctx.font='900 14px sans-serif';
-        ctx.fillText('ENEMY',e.x+6,e.y+e.h/2);
+      if(!img){
+        showAssetError('実行中に画像が見つかりません: assets/enemy_'+(e.type+1)+'.png');
+        return;
       }
+      ctx.drawImage(img,e.x,e.y,e.w,e.h);
     }
     if(phase==='boss' && boss.alive){
       const sx=boss.x-bossCameraX+boss.w/2;
@@ -520,7 +593,7 @@
       ctx.translate(sx,sy+bob);
       ctx.rotate(rot);
       ctx.scale(scaleX,scaleY);
-      let img=(bossSpriteImg && bossSpriteImg.complete)?bossSpriteImg:bossIntroImg2;
+      let img=bossSpriteImg;
       let strideX=0;
 
       if(boss.motion==='walk' && bossWalkFrames.length){
@@ -531,15 +604,15 @@
         strideX=Math.sin(boss.walkT*7.2)*3;
       }else{
         // 溜め・空中・着地は今回指定された boss_sprite.webp を使用
-        img=(bossSpriteImg && bossSpriteImg.complete)?bossSpriteImg:bossIntroImg2;
+        img=bossSpriteImg;
       }
 
-      if(img && img.complete){
-        ctx.drawImage(img,-boss.w/2+strideX,-boss.h/2,boss.w,boss.h);
-      }else{
-        ctx.fillStyle='#8b1e1e';ctx.fillRect(-boss.w/2,-boss.h/2,boss.w,boss.h);
-        ctx.fillStyle='#fff';ctx.font='900 22px sans-serif';ctx.fillText('BOSS',-35,8);
+      if(!img || !img.complete){
+        showAssetError('実行中にボス画像を読み込めません');
+        ctx.restore();
+        return;
       }
+      ctx.drawImage(img,-boss.w/2+strideX,-boss.h/2,boss.w,boss.h);
       ctx.restore();
     }
     {
@@ -550,15 +623,12 @@
       const heroScreenX=phase==='boss'?hero.x-bossCameraX:hero.x;
       if(hero.face<0){ctx.translate(heroScreenX*2+hero.w,0);ctx.scale(-1,1)}
       const heroDrawX=phase==='boss'?hero.x-bossCameraX:hero.x;
-      if(img){
-        ctx.drawImage(img,heroDrawX,hero.y,hero.w,hero.h);
-      }else{
-        ctx.fillStyle='#ffd94f';
-        ctx.fillRect(heroDrawX,hero.y,hero.w,hero.h);
-        ctx.fillStyle='#17384d';
-        ctx.font='900 17px sans-serif';
-        ctx.fillText('HERO',heroDrawX+12,hero.y+hero.h/2);
+      if(!img){
+        showAssetError('実行中に主人公画像を読み込めません: assets/hero_'+idx+'.png');
+        ctx.restore();
+        return;
       }
+      ctx.drawImage(img,heroDrawX,hero.y,hero.w,hero.h);
       ctx.restore();
     }
 for(const p of particles){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill()}ctx.globalAlpha=1;
